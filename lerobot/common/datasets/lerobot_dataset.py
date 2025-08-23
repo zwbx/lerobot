@@ -692,9 +692,16 @@ class LeRobotDataset(torch.utils.data.Dataset):
 
         return query_timestamps
 
+    # def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
+    #     return {
+    #         key: torch.stack(self.hf_dataset.select(q_idx)[key])
+    #         for key, q_idx in query_indices.items()
+    #         if key not in self.meta.video_keys
+    #     }
+
     def _query_hf_dataset(self, query_indices: dict[str, list[int]]) -> dict:
         return {
-            key: torch.stack(self.hf_dataset.select(q_idx)[key])
+            key: torch.stack([torch.tensor(self.hf_dataset.select(q_idx)[key][i]) for i in range(len(q_idx))])
             for key, q_idx in query_indices.items()
             if key not in self.meta.video_keys
         }
