@@ -24,21 +24,21 @@ from accelerate.utils import set_seed as accelerate_set_seed
 from termcolor import colored
 from torch.optim import Optimizer
 
-from lerobot.common.datasets.factory import make_dataset
-from lerobot.common.datasets.sampler import EpisodeAwareSampler
-from lerobot.common.envs.factory import make_env
-from lerobot.common.optim.factory import make_optimizer_and_scheduler
-from lerobot.common.policies.factory import make_policy
-from lerobot.common.policies.pretrained import PreTrainedPolicy
-from lerobot.common.utils.logging_utils import AverageMeter, MetricsTracker
-from lerobot.common.utils.train_utils import (
+from lerobot.datasets.factory import make_dataset
+from lerobot.datasets.sampler import EpisodeAwareSampler
+# from lerobot.envs.factory import make_env  # Import later to avoid MuJoCo issues
+from lerobot.optim.factory import make_optimizer_and_scheduler
+from lerobot.policies.factory import make_policy
+from lerobot.policies.pretrained import PreTrainedPolicy
+from lerobot.utils.logging_utils import AverageMeter, MetricsTracker
+from lerobot.utils.train_utils import (
     get_step_checkpoint_dir,
     get_step_identifier,
     load_training_state,
     save_checkpoint,
     update_last_checkpoint,
 )
-from lerobot.common.utils.utils import (
+from lerobot.utils.utils import (
     format_big_number,
     has_method,
     init_logging,
@@ -101,7 +101,7 @@ def train(cfg: TrainPipelineConfig):
     # Initialize accelerator
     from accelerate.utils import DistributedDataParallelKwargs
 
-    from lerobot.common.utils.wandb_utils import cfg_to_group, get_wandb_run_id_from_filesystem
+    from lerobot.utils.wandb_utils import cfg_to_group, get_wandb_run_id_from_filesystem
 
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(
@@ -150,6 +150,7 @@ def train(cfg: TrainPipelineConfig):
     eval_env = None
     if cfg.eval_freq > 0 and cfg.env is not None and accelerator.is_main_process:
         logging.info("Creating env")
+        from lerobot.envs.factory import make_env  # Import here to delay MuJoCo initialization
         eval_env = make_env(cfg.env, n_envs=cfg.eval.batch_size, use_async_envs=cfg.eval.use_async_envs)
 
     # Create policy
@@ -157,6 +158,7 @@ def train(cfg: TrainPipelineConfig):
         logging.info("Creating policy")
 
     # Use accelerator's device instead of cfg.policy.device
+    cfg.policy.device = str(accelerator.device) 
     with accelerator.main_process_first():
         policy = make_policy(
             cfg=cfg.policy,
@@ -289,9 +291,6 @@ def train(cfg: TrainPipelineConfig):
             logging.info(f"Checkpoint policy after step {step}")
             checkpoint_dir = get_step_checkpoint_dir(cfg.output_dir, cfg.steps, step)
 
-            # Wait for all processes before saving
-            accelerator.wait_for_everyone()
-
             # Unwrap model for saving
             unwrapped_policy = accelerator.unwrap_model(policy)
             save_checkpoint(checkpoint_dir, step, cfg, unwrapped_policy, optimizer, lr_scheduler)
@@ -342,8 +341,8 @@ def train(cfg: TrainPipelineConfig):
             # Set back to training mode
             policy.train()
 
-    # Wait for all processes to finish
-    accelerator.wait_for_everyone()
+        # Wait for all processes to finish
+        accelerator.wait_for_everyone()
 
     # Cleanup
     if eval_env and accelerator.is_main_process:
